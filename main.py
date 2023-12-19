@@ -3,6 +3,7 @@ import glob
 import json
 import time
 import shutil
+import random
 
 directory_of_images = {}
 
@@ -11,6 +12,9 @@ image_folder = 'testimages'
 # mostly debugging, to figure out what values exist...
 licenses = set()
 tags = set()
+
+#how many times in a row did the upload fail?
+errorcount = 0
 
 
 def prepare_directory():
@@ -60,8 +64,13 @@ def upload_images():
     for file in glob.glob("./" + image_folder + "/*"):
         image_files.append(file)
 
+    # sometimes if the image names are similar the spam filter seeems to be triggered (I think, it's hard to tell)
+    random.shuffle(image_files)
     for image_file in image_files:
         pure_filename = image_file.split('/')[-1].split('.')[0].replace('_o', '').split('_')[-1]
+        print("Pure filename: "+pure_filename)
+        if pure_filename not in directory_of_images:
+            continue
         json_file_for_image = directory_of_images[pure_filename]
         f = open(json_file_for_image)
         data = json.load(f)
@@ -73,7 +82,7 @@ def upload_images():
         i_description = i_description + '<br>' + i_name
         for album in data['albums']:
             i_description = i_description + '<br> - Album: ' + album['title']
-        i_description = i_description + '<br><br><i>This is an item from the StudentenPACK-Image-Archive. Originally hosted on flickr.<br>The StudentenPACK was a Student Newspaper from Lübeck (Germany) running from 2005 to 2018. In Addition to print journalism dozens of student photographers published their work via the Newspaper. This archive preserves their work.</i><br><br> https://www.studentenpack.de/'
+        i_description = i_description + '<br><br><i>This is an item from the StudentenPACK-Image-Archive. Originally hosted on flickr.<br>The StudentenPACK was a Student Newspaper from Lübeck (Germany) running from 2005 to 2018. In Addition to print journalism dozens of student photographers published their work via the Newspaper. This archive preserves their work.</i><br><i>Dies ist ein Artikel aus dem StudentenPACK-Bilderarchiv. Ursprünglich gehostet auf flickr. Das StudentenPACK war eine studentische Zeitung an der Universität zu Lübeck (Deutschland), die von 2005 bis 2018 erschien. Neben dem Printjournalismus veröffentlichten Dutzende von studentischen Fotografen ihre Arbeiten über die Zeitung. Dieses Archiv bewahrt ihre Arbeiten auf.</i><br><br> https://www.studentenpack.de/'
         if data['photopage']:
             i_description = i_description + '<br> Originally Uploaded to: <a href="' + data['photopage'] + '">' + data[
                 'photopage'] + '</a> on ' + data[
@@ -91,9 +100,15 @@ def upload_images():
             i_date = data['date_imported']
         for tag in data['tags']:
             i_tags.append(tag['tag'])
-            if tag['tag'].startswith("Foto:"):
-                i_creator = tag['tag'].split("Foto:")[1]
-                i_creator = ''.join(map(lambda x: x if x.islower() else " " + x, i_creator))
+            if tag['tag'].startswith("Foto:") or tag['tag'].startswith("foto:") or tag['tag'].startswith("Foo:"):
+                if tag['tag'].startswith("Foto:"):
+                    i_creator = tag['tag'].split("Foto:")[1]
+                if tag['tag'].startswith("foto:"):
+                    i_creator = tag['tag'].split("foto:")[1]
+                if tag['tag'].startswith("Foo:"):
+                    i_creator = tag['tag'].split("Foo:")[1]
+                if not i_creator == "StudentenPACK":
+                    i_creator = ''.join(map(lambda x: x if x.islower() else " " + x, i_creator))
                 i_creator = i_creator.strip()
                 if i_creator == 'Lukasruge':
                     i_creator = 'Lukas Ruge'
@@ -147,7 +162,7 @@ def upload_images():
         else:
             i_name = 'PACK_ARCH_IMG_' + i_name[:56]
 
-        # umlauts are giving us some bulshit s3 bucket exception that one has to figure out...
+        # umlauts are giving us some bullshit s3 bucket exception that one has to figure out...
         i_name = i_name.replace('ü', 'u')
         i_name = i_name.replace('Ü', 'U')
         i_name = i_name.replace('ä', 'a')
@@ -155,6 +170,14 @@ def upload_images():
         i_name = i_name.replace('ö', 'o')
         i_name = i_name.replace('Ö', 'O')
         i_name = i_name.replace('ß', 's')
+        i_name = i_name.replace('(', '')
+        i_name = i_name.replace(')', '')
+        i_name = i_name.replace(':', '')
+        i_name = i_name.replace('-', '_')
+        i_name = i_name.replace('.', '')
+        i_name = i_name.replace(',', '')
+
+        i_name = i_name + "_" + data['id']
 
         # md = {'collection': 'test_collection', 'title': i_name, 'description': i_description, 'mediatype': 'image',
         #      'creator': i_creator, 'publisher': 'StudentenPACK', 'date': i_date, 'licenseurl': i_license_url}
@@ -168,15 +191,22 @@ def upload_images():
         try:
             actual_upload(i_name, image_file, md, access_key=access_key, secret_key=secret_key)
             shutil.move(image_file, "./done/" + image_file.split('/')[-1])
-        except(Exception, RuntimeError, TypeError, NameError):
+            errorcount = 0
+        except Exception as error:
+            errorcount = errorcount + 1
             print("Error " + image_file)
+            print(error)
+            print("Errorcount: "+str(errorcount))
 
         print("wait")
         # unclear how many seconds are needed to not run into rate limiting...
-        time.sleep(120)
-        # time.sleep(300)
+        # also, unclear of randomizing the duration helps at all...
+        time.sleep(5)
+        #r_sleep = random.randint(5, 10)
+        #time.sleep(r_sleep)
 
 
+errorcount = 0
 prepare_directory()
 upload_images()
 # print(directory_of_images)
